@@ -17,42 +17,69 @@ export function ProfileHeader() {
   const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchProfile() {
       if (!user) return;
 
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('username, avatar_url, bio')
-        .eq('id', user.id)
-        .single();
+      try {
+        // First try to get existing profile
+        const { data: existingProfile, error: fetchError } = await supabase
+          .from('user_profiles')
+          .select('username, avatar_url, bio')
+          .eq('id', user.id)
+          .maybeSingle();
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // Profile doesn't exist, create one with default values
-          const username = user.email?.split('@')[0] || 'user';
+        if (fetchError && fetchError.code !== 'PGRST116') {
+          throw fetchError;
+        }
+
+        if (!existingProfile) {
+          // Create profile if it doesn't exist
+          const defaultUsername = user.email?.split('@')[0] || 'user';
           const { data: newProfile, error: createError } = await supabase
             .from('user_profiles')
-            .insert({ id: user.id, username })
+            .insert({
+              id: user.id,
+              username: defaultUsername,
+              bio: null,
+              avatar_url: null
+            })
             .select()
             .single();
 
-          if (!createError && newProfile) {
+          if (createError) {
+            if (createError.code === '23505') { // Duplicate key error
+              // Profile might have been created by trigger, try fetching again
+              const { data: retriedProfile, error: retryError } = await supabase
+                .from('user_profiles')
+                .select('username, avatar_url, bio')
+                .eq('id', user.id)
+                .single();
+
+              if (retryError) throw retryError;
+              setProfile(retriedProfile);
+              setUsername(retriedProfile.username);
+              setBio(retriedProfile.bio || '');
+            } else {
+              throw createError;
+            }
+          } else {
             setProfile(newProfile);
             setUsername(newProfile.username);
             setBio(newProfile.bio || '');
           }
         } else {
-          setError('Failed to load profile');
+          setProfile(existingProfile);
+          setUsername(existingProfile.username);
+          setBio(existingProfile.bio || '');
         }
-        return;
-      }
-
-      if (data) {
-        setProfile(data);
-        setUsername(data.username);
-        setBio(data.bio || '');
+      } catch (err) {
+        console.error('Profile error:', err);
+        setError('Failed to load profile');
+      } finally {
+        setLoading(false);
       }
     }
 
@@ -62,30 +89,32 @@ export function ProfileHeader() {
   const handleSave = async () => {
     if (!user || !username.trim()) return;
 
-    setError('');
-    const { error: updateError } = await supabase
-      .from('user_profiles')
-      .upsert({
-        id: user.id,
+    try {
+      setError('');
+      const { error: updateError } = await supabase
+        .from('user_profiles')
+        .update({
+          username: username.trim(),
+          bio: bio.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      setProfile(prev => ({
+        ...prev!,
         username: username.trim(),
-        bio: bio.trim(),
-        updated_at: new Date().toISOString(),
-      });
-
-    if (updateError) {
+        bio: bio.trim() || null,
+      }));
+      setIsEditing(false);
+    } catch (err) {
+      console.error('Update error:', err);
       setError('Failed to update profile');
-      return;
     }
-
-    setProfile((prev) => ({
-      ...prev!,
-      username: username.trim(),
-      bio: bio.trim(),
-    }));
-    setIsEditing(false);
   };
 
-  if (!profile) {
+  if (loading) {
     return <div className="h-48 bg-gray-800 rounded-lg animate-pulse" />;
   }
 
@@ -99,7 +128,7 @@ export function ProfileHeader() {
       
       <div className="flex items-center space-x-6">
         <div className="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center">
-          {profile.avatar_url ? (
+          {profile?.avatar_url ? (
             <img
               src={profile.avatar_url}
               alt={profile.username}
@@ -143,12 +172,12 @@ export function ProfileHeader() {
           ) : (
             <>
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold">{profile.username}</h2>
+                <h2 className="text-2xl font-bold">{profile?.username}</h2>
                 <Button variant="ghost" onClick={() => setIsEditing(true)}>
                   Edit Profile
                 </Button>
               </div>
-              {profile.bio && <p className="mt-2 text-gray-300">{profile.bio}</p>}
+              {profile?.bio && <p className="mt-2 text-gray-300">{profile.bio}</p>}
             </>
           )}
         </div>

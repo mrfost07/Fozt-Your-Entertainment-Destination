@@ -12,11 +12,17 @@ interface UploadFormProps {
   categories: Category[];
 }
 
+interface FileErrors {
+  video?: string;
+  thumbnail?: string;
+}
+
 export function VideoUploadForm({ categories }: UploadFormProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fileErrors, setFileErrors] = useState<FileErrors>({});
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
@@ -43,22 +49,19 @@ export function VideoUploadForm({ categories }: UploadFormProps) {
 
     setLoading(true);
     setError('');
+    setFileErrors({});
 
     try {
-      // Upload files
-      const videoUrl = await uploadFile(
-        videoFile,
-        'videos',
-        `videos/${user.id}/${Date.now()}-${videoFile.name}`
-      );
+      // Upload files with unique paths based on timestamp and user ID
+      const timestamp = Date.now();
+      const videoPath = `${user.id}/${timestamp}-${videoFile.name}`;
+      const thumbnailPath = `${user.id}/${timestamp}-${thumbnailFile.name}`;
 
-      const thumbnailUrl = await uploadFile(
-        thumbnailFile,
-        'videos',
-        `thumbnails/${user.id}/${Date.now()}-${thumbnailFile.name}`
-      );
+      const [videoUrl, thumbnailUrl] = await Promise.all([
+        uploadFile(videoFile, 'videos', videoPath),
+        uploadFile(thumbnailFile, 'thumbnails', thumbnailPath),
+      ]);
 
-      // Create video record
       await createVideo({
         ...formData,
         videoUrl,
@@ -67,9 +70,15 @@ export function VideoUploadForm({ categories }: UploadFormProps) {
       });
 
       navigate('/profile');
-    } catch (err) {
-      setError('Failed to upload video. Please try again.');
-      console.error(err);
+    } catch (err: any) {
+      console.error('Upload error:', err);
+      if (err.message.includes('videos')) {
+        setFileErrors(prev => ({ ...prev, video: err.message }));
+      } else if (err.message.includes('thumbnails')) {
+        setFileErrors(prev => ({ ...prev, thumbnail: err.message }));
+      } else {
+        setError(err.message || 'Failed to upload video. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -89,11 +98,13 @@ export function VideoUploadForm({ categories }: UploadFormProps) {
             type="video"
             file={videoFile}
             onChange={setVideoFile}
+            error={fileErrors.video}
           />
           <FileUploadField
             type="image"
             file={thumbnailFile}
             onChange={setThumbnailFile}
+            error={fileErrors.thumbnail}
           />
         </div>
 
