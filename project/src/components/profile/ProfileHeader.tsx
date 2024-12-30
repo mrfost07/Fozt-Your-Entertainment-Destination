@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
-import { UserCircle } from 'lucide-react';
+import { AvatarUpload } from './AvatarUpload';
 
 interface UserProfile {
   username: string;
@@ -24,57 +24,17 @@ export function ProfileHeader() {
       if (!user) return;
 
       try {
-        // First try to get existing profile
         const { data: existingProfile, error: fetchError } = await supabase
           .from('user_profiles')
           .select('username, avatar_url, bio')
           .eq('id', user.id)
-          .maybeSingle();
+          .single();
 
-        if (fetchError && fetchError.code !== 'PGRST116') {
-          throw fetchError;
-        }
+        if (fetchError) throw fetchError;
 
-        if (!existingProfile) {
-          // Create profile if it doesn't exist
-          const defaultUsername = user.email?.split('@')[0] || 'user';
-          const { data: newProfile, error: createError } = await supabase
-            .from('user_profiles')
-            .insert({
-              id: user.id,
-              username: defaultUsername,
-              bio: null,
-              avatar_url: null
-            })
-            .select()
-            .single();
-
-          if (createError) {
-            if (createError.code === '23505') { // Duplicate key error
-              // Profile might have been created by trigger, try fetching again
-              const { data: retriedProfile, error: retryError } = await supabase
-                .from('user_profiles')
-                .select('username, avatar_url, bio')
-                .eq('id', user.id)
-                .single();
-
-              if (retryError) throw retryError;
-              setProfile(retriedProfile);
-              setUsername(retriedProfile.username);
-              setBio(retriedProfile.bio || '');
-            } else {
-              throw createError;
-            }
-          } else {
-            setProfile(newProfile);
-            setUsername(newProfile.username);
-            setBio(newProfile.bio || '');
-          }
-        } else {
-          setProfile(existingProfile);
-          setUsername(existingProfile.username);
-          setBio(existingProfile.bio || '');
-        }
+        setProfile(existingProfile);
+        setUsername(existingProfile.username);
+        setBio(existingProfile.bio || '');
       } catch (err) {
         console.error('Profile error:', err);
         setError('Failed to load profile');
@@ -114,6 +74,10 @@ export function ProfileHeader() {
     }
   };
 
+  const handleAvatarChange = (avatarUrl: string) => {
+    setProfile(prev => prev ? { ...prev, avatar_url: avatarUrl } : null);
+  };
+
   if (loading) {
     return <div className="h-48 bg-gray-800 rounded-lg animate-pulse" />;
   }
@@ -126,18 +90,11 @@ export function ProfileHeader() {
         </div>
       )}
       
-      <div className="flex items-center space-x-6">
-        <div className="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center">
-          {profile?.avatar_url ? (
-            <img
-              src={profile.avatar_url}
-              alt={profile.username}
-              className="w-full h-full rounded-full object-cover"
-            />
-          ) : (
-            <UserCircle className="w-16 h-16 text-gray-500" />
-          )}
-        </div>
+      <div className="flex flex-col md:flex-row md:items-start space-y-6 md:space-y-0 md:space-x-8">
+        <AvatarUpload
+          currentAvatarUrl={profile?.avatar_url || null}
+          onAvatarChange={handleAvatarChange}
+        />
 
         <div className="flex-1">
           {isEditing ? (

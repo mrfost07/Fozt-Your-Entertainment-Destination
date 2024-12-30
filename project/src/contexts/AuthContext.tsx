@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { User } from '@supabase/supabase-js';
+import type { User, AuthError } from '@supabase/supabase-js';
 
 interface AuthContextType {
   user: User | null;
@@ -17,27 +17,82 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+    // Check for existing session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+
+      // Handle token refresh errors
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_OUT') {
+        // Clear local storage on sign out or token refresh
+        if (!session) {
+          localStorage.removeItem('supabase.auth.token');
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
+  const handleAuthError = (error: AuthError) => {
+    // Handle specific auth errors
+    if (error.message.includes('refresh_token_not_found')) {
+      // Force sign out if refresh token is invalid
+      signOut();
+    }
+    throw error;
+  };
+
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ 
+        email, 
+        password,
+        options: {
+          // Persist session
+          persistSession: true
+        }
+      });
+      if (error) throw error;
+    } catch (error) {
+      handleAuthError(error as AuthError);
+    }
   };
 
   const signUp = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) throw error;
+    try {
+      const { error } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          // Persist session
+          persistSession: true
+        }
+      });
+      if (error) throw error;
+    } catch (error) {
+      handleAuthError(error as AuthError);
+    }
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      // Clear any stored auth data
+      localStorage.removeItem('supabase.auth.token');
+      setUser(null);
+    } catch (error) {
+      handleAuthError(error as AuthError);
+    }
   };
 
   return (
